@@ -417,6 +417,7 @@ const firebaseConfig = {
 let db = null;
 let auth = null;
 const EMAIL_MAP = { 'adm': 'adm@oficina.com.br', 'sup': 'sup@oficina.com.br' };
+const PROFILE_MAP = { 'adm': {displayName:'Proprietário', role:'admin'}, 'sup': {displayName:'Supervisor', role:'user'} };
 function loadScriptTag(src){
   return new Promise(function(resolve,reject){
     const s=document.createElement('script');
@@ -561,7 +562,16 @@ async function handleLogin(){
     await storageSet('kg_users', JSON.stringify(users));
   }
   const found=users.find(u=>u.username.toLowerCase()===login);
-  if(!found){ err.textContent='Usuário não configurado no sistema.'; return; }
+  if(!found){
+    const profile = PROFILE_MAP[login];
+    if(!profile){ err.textContent='Usuário não configurado no sistema.'; return; }
+    const newUser = {username:login, password:'', displayName:profile.displayName, role:profile.role};
+    users.push(newUser);
+    await storageSet('kg_users', JSON.stringify(users));
+    currentUser=newUser;
+    await enterApp();
+    return;
+  }
   currentUser=found;
   await enterApp();
 }
