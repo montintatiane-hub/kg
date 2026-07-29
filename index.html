@@ -415,6 +415,8 @@ const firebaseConfig = {
   appId: "1:252827238384:web:c235905e3bd0ddd0256735"
 };
 let db = null;
+let auth = null;
+const EMAIL_MAP = { 'adm': 'adm@oficina.com.br', 'sup': 'sup@oficina.com.br' };
 function loadScriptTag(src){
   return new Promise(function(resolve,reject){
     const s=document.createElement('script');
@@ -424,14 +426,15 @@ function loadScriptTag(src){
 }
 async function loadFirebaseSDK(){
   const cdns = [
-    ['https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-app-compat.js','https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-firestore-compat.js'],
-    ['https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js','https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js'],
-    ['https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-app-compat.js','https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-firestore-compat.js']
+    ['https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-app-compat.js','https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-firestore-compat.js','https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-auth-compat.js'],
+    ['https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js','https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js','https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js'],
+    ['https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-app-compat.js','https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-firestore-compat.js','https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-auth-compat.js']
   ];
   for(const pair of cdns){
     try{
       await loadScriptTag(pair[0]);
       await loadScriptTag(pair[1]);
+      await loadScriptTag(pair[2]);
       if(typeof firebase !== 'undefined') return true;
     }catch(e){ console.warn('Falha ao carregar Firebase de', pair[0], e); }
   }
@@ -448,8 +451,9 @@ async function initFirebase(){
   try{
     firebase.initializeApp(firebaseConfig);
     db = firebase.firestore();
+    auth = firebase.auth();
     db.settings({ experimentalForceLongPolling: true, useFetchStreams: false });
-    init();
+    document.getElementById('loginLoading').style.display='none';
   }catch(e){
     console.error('Firebase falhou ao iniciar:', e);
     const el = document.getElementById('loginLoading');
@@ -506,7 +510,10 @@ const SEED_CARS=[
   {id:'car2',name:'João Santos',phone:'',car:'Fiat Toro 2021',plate:'DEF-5678',entry:'2026-07-09',due:'2026-07-13',stage:'painting'},
   {id:'car3',name:'Ana Costa',phone:'',car:'VW Golf 2020',plate:'GHI-9012',entry:'2026-07-08',due:'',stage:'ready'}
 ];
-const SEED_USERS=[{username:'Kirk',password:'kirk',displayName:'Kirk',role:'admin'}];
+const SEED_USERS=[
+  {username:'adm',password:'',displayName:'Proprietário',role:'admin'},
+  {username:'sup',password:'',displayName:'Supervisor',role:'user'}
+];
 
 function defaultCarFields(){
   return {phone:'',cpf:'',address:'',color:'',km:'',fuel:'',damage:'',priority:'normal',budget:0,paymentStatus:'pendente',
@@ -532,7 +539,19 @@ function fmtDateShort(iso){ if(!iso) return '—'; const p=iso.split('-'); retur
 function toast(msg){ document.getElementById('kgToastBody').textContent=msg; new bootstrap.Toast(document.getElementById('kgToast'),{delay:2600}).show(); }
 
 /* ================= INIT / LOGIN ================= */
-async function init(){
+async function handleLogin(){
+  const login=document.getElementById('loginUser').value.trim().toLowerCase();
+  const pass=document.getElementById('loginPass').value;
+  const err=document.getElementById('loginError'); err.textContent='';
+  if(!login||!pass){ err.textContent='Preencha usuário e senha.'; return; }
+  const email = EMAIL_MAP[login];
+  if(!email){ err.textContent='Usuário ou senha incorretos.'; return; }
+  try{
+    await auth.signInWithEmailAndPassword(email, pass);
+  }catch(e){
+    err.textContent='Usuário ou senha incorretos.';
+    return;
+  }
   try{
     const val = await storageGet('kg_users');
     users = val ? JSON.parse(val) : [];
@@ -541,15 +560,8 @@ async function init(){
     users = SEED_USERS.slice();
     await storageSet('kg_users', JSON.stringify(users));
   }
-  document.getElementById('loginLoading').style.display='none';
-}
-async function handleLogin(){
-  const login=document.getElementById('loginUser').value.trim().toLowerCase();
-  const pass=document.getElementById('loginPass').value;
-  const err=document.getElementById('loginError'); err.textContent='';
-  if(!login||!pass){ err.textContent='Preencha usuário e senha.'; return; }
-  const found=users.find(u=>u.username.toLowerCase()===login && u.password===pass);
-  if(!found){ err.textContent='Usuário ou senha incorretos.'; return; }
+  const found=users.find(u=>u.username.toLowerCase()===login);
+  if(!found){ err.textContent='Usuário não configurado no sistema.'; return; }
   currentUser=found;
   await enterApp();
 }
@@ -566,6 +578,7 @@ async function enterApp(){
 }
 function logout(){
   currentUser=null;
+  if(auth) auth.signOut();
   document.getElementById('mainApp').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('loginUser').value=''; document.getElementById('loginPass').value=''; document.getElementById('loginError').textContent='';
