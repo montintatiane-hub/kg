@@ -937,6 +937,8 @@ function partsProgressText(parts){
   const pct=partCompletionPct(parts);
   if(pct===null) return '';
   const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
+  const done=assigned.filter(k=>parts[k].done);
+  return '\n\n🔧 Progresso do reparo: '+pct+'% concluído ('+done.length+'/'+assigned.length+' itens).';
 }
 function buildCarSvgMarkup(parts, ctx, editable){
   let svg='<svg viewBox="0 0 280 460" style="width:100%;max-width:250px;display:block;margin:0 auto;" id="carSvg_'+ctx+'" xmlns="http://www.w3.org/2000/svg">';
