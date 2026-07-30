@@ -163,14 +163,14 @@ body{ background:#f4f5f7; }
         <section class="kg-section" id="sec-vehicles">
           <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
             <div class="d-flex gap-2 flex-wrap flex-grow-1">
-              <input type="text" class="form-control" style="max-width:240px;" placeholder="🔎 Buscar placa ou cliente..." id="searchInput" oninput="renderVehicles()">
-              <select class="form-select admin-only" style="max-width:170px;" id="filterPayment" onchange="renderVehicles()">
+              <input type="text" class="form-control" style="max-width:240px;" placeholder="🔎 Buscar placa ou cliente..." id="searchInput" oninput="quickFilter=null;renderVehicles()">
+              <select class="form-select admin-only" style="max-width:170px;" id="filterPayment" onchange="quickFilter=null;renderVehicles()">
                 <option value="">💰 Pagamento</option><option value="pendente">Pendente</option><option value="parcial">Parcial</option><option value="pago">Pago</option>
               </select>
-              <select class="form-select" style="max-width:170px;" id="filterPriority" onchange="renderVehicles()">
+              <select class="form-select" style="max-width:170px;" id="filterPriority" onchange="quickFilter=null;renderVehicles()">
                 <option value="">🚩 Prioridade</option><option value="urgent">Urgente</option><option value="normal">Normal</option>
               </select>
-              <select class="form-select" style="max-width:170px;" id="filterStage" onchange="renderVehicles()">
+              <select class="form-select" style="max-width:170px;" id="filterStage" onchange="quickFilter=null;renderVehicles()">
                 <option value="">📋 Etapa</option>
               </select>
             </div>
@@ -652,10 +652,10 @@ function renderDashboard(){
   const prontos=cars.filter(c=>c.stage==='ready').length;
   const atrasados=cars.filter(isOverdue).length;
   let cards=[
-    {label:'Total de veículos',val:total,icon:'bi-car-front-fill',bg:'primary'},
-    {label:'Em andamento',val:emAndamento,icon:'bi-tools',bg:'warning'},
-    {label:'Prontos',val:prontos,icon:'bi-check-circle-fill',bg:'success'},
-    {label:'Atrasados',val:atrasados,icon:'bi-exclamation-triangle-fill',bg:'danger'}
+    {label:'Total de veículos',val:total,icon:'bi-car-front-fill',bg:'primary',filter:'total'},
+    {label:'Em andamento',val:emAndamento,icon:'bi-tools',bg:'warning',filter:'andamento'},
+    {label:'Prontos',val:prontos,icon:'bi-check-circle-fill',bg:'success',filter:'ready'},
+    {label:'Atrasados',val:atrasados,icon:'bi-exclamation-triangle-fill',bg:'danger',filter:'overdue'}
   ];
   if(isAdmin()){
     const thisMonth=todayISO().slice(0,7);
@@ -663,7 +663,7 @@ function renderDashboard(){
     cards.push({label:'Faturamento do mês',val:'R$ '+fat.toFixed(2),icon:'bi-cash-stack',bg:'gold',small:true});
   }
   document.getElementById('dashStats').innerHTML = cards.map(c=>
-    '<div class="col-6 col-md-3"><div class="card kg-card h-100"><div class="card-body d-flex align-items-center gap-3">'+
+    '<div class="col-6 col-md-3"><div class="card kg-card h-100"'+(c.filter?' style="cursor:pointer" onclick="goToVehiclesFiltered(\''+c.filter+'\')"':'')+'><div class="card-body d-flex align-items-center gap-3">'+
     '<div class="kg-stat-icon '+(c.bg==='gold'?'bg-gold-subtle text-gold':'bg-'+c.bg+'-subtle text-'+c.bg)+'"><i class="bi '+c.icon+'"></i></div>'+
     '<div><div class="'+(c.small?'fs-6':'fs-4')+' fw-bold">'+c.val+'</div><div class="text-secondary small">'+c.label+'</div></div>'+
     '</div></div></div>').join('');
@@ -683,6 +683,15 @@ function renderDashboard(){
 }
 
 /* ================= VEHICLES ================= */
+let quickFilter = null;
+function goToVehiclesFiltered(type){
+  quickFilter = type;
+  document.getElementById('searchInput').value='';
+  document.getElementById('filterPayment').value='';
+  document.getElementById('filterPriority').value='';
+  document.getElementById('filterStage').value='';
+  switchSection('vehicles');
+}
 function populateStageFilter(){
   const sel=document.getElementById('filterStage');
   if(sel.options.length<=1){
@@ -700,7 +709,8 @@ function renderVehicles(){
     const matchPay=!payF||c.paymentStatus===payF;
     const matchPrio=!prioF||c.priority===prioF;
     const matchStage=!stageF||c.stage===stageF;
-    return matchQ&&matchPay&&matchPrio&&matchStage;
+    const matchQuick=!quickFilter||(quickFilter==='ready'?c.stage==='ready':quickFilter==='overdue'?isOverdue(c):quickFilter==='andamento'?c.stage!=='ready':true);
+    return matchQ&&matchPay&&matchPrio&&matchStage&&matchQuick;
   });
   list=list.slice().sort((a,b)=>(b.priority==='urgent')-(a.priority==='urgent'));
   document.getElementById('vehiclesGrid').innerHTML = list.length===0 ? '<p class="text-secondary">Nenhum veículo encontrado.</p>' :
