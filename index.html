@@ -293,10 +293,7 @@ body{ background:#f4f5f7; }
     </div>
     <div class="mb-3"><label class="form-label">Avarias na entrada</label><input class="form-control" id="nvDamage" placeholder="Ex: risco na porta direita"></div>
 
-    <div class="small fw-bold text-gold text-uppercase mb-2">Quais serviços serão feitos?</div>
-    <div id="nvServiceTypes" class="mb-3 d-flex flex-wrap gap-2"></div>
-
-    <div class="small fw-bold text-gold text-uppercase mb-2">Mapa do veículo — quais peças precisam de serviço?</div>
+    <div class="small fw-bold text-gold text-uppercase mb-2">Mapa do veículo — toque numa peça e marque os serviços</div>
     <div id="newVehicleDiagram" class="mb-3"></div>
 
     <div class="small fw-bold text-gold text-uppercase mb-2">Serviço</div>
@@ -521,12 +518,11 @@ const SEED_USERS=[
 
 function defaultCarFields(){
   return {phone:'',cpf:'',address:'',color:'',km:'',fuel:'',damage:'',priority:'normal',budget:0,paymentStatus:'pendente',
-    responsavel:'',services:[],serviceTypes:[],photoBefore:'',photoAfter:'',attachments:[],messages:[],stageHistory:[],parts:{}};
+    responsavel:'',services:[],photoBefore:'',photoAfter:'',attachments:[],messages:[],stageHistory:[],parts:{}};
 }
 function normalizeCar(c){
   const out=Object.assign(defaultCarFields(),c);
   if(!Array.isArray(out.services))out.services=[];
-  if(!Array.isArray(out.serviceTypes))out.serviceTypes=[];
   if(!Array.isArray(out.messages))out.messages=[];
   if(!Array.isArray(out.attachments))out.attachments=[];
   if(!out.parts||typeof out.parts!=='object'||Array.isArray(out.parts))out.parts={};
@@ -729,7 +725,7 @@ function vehicleCardHtml(c){
   if(isAdmin()) badges+='<span class="badge bg-'+paymentBg[c.paymentStatus]+' badge-soft me-1">💰 '+paymentLabel[c.paymentStatus]+'</span>';
   const resp=users.find(u=>u.username===c.responsavel);
   if(resp) badges+='<span class="badge bg-secondary-subtle text-secondary-emphasis badge-soft">👤 '+resp.displayName+'</span>';
-  let svcBadges=(c.serviceTypes||[]).map(k=>'<span class="badge badge-soft me-1 mt-1" style="background:'+SERVICE_TYPES[k].color+';color:#fff;">'+SERVICE_TYPES[k].label+'</span>').join('');
+  let svcBadges=getCarServiceTypes(c).map(k=>'<span class="badge badge-soft me-1 mt-1" style="background:'+SERVICE_TYPES[k].color+';color:#fff;">'+SERVICE_TYPES[k].label+'</span>').join('');
   const thumb=c.photoBefore ? '<img src="'+c.photoBefore+'" class="kg-thumb">' : '<div class="kg-thumb-placeholder"><i class="bi bi-car-front"></i></div>';
   let actions;
   if(c.stage==='ready'){
@@ -751,26 +747,9 @@ function vehicleCardHtml(c){
 }
 
 /* ================= NEW VEHICLE ================= */
-function renderServiceTypeCheckboxes(containerId, selected){
-  const sel=selected||[];
-  document.getElementById(containerId).innerHTML=Object.keys(SERVICE_TYPES).map(function(k){
-    const checked=sel.includes(k);
-    return '<label class="btn btn-sm '+(checked?'btn-gold':'btn-outline-secondary')+' mb-0" style="cursor:pointer;">'+
-      '<input type="checkbox" value="'+k+'" class="service-type-check d-none" data-container="'+containerId+'" '+(checked?'checked':'')+' onchange="toggleServiceTypeBtn(this)"> '+SERVICE_TYPES[k].label+'</label>';
-  }).join('');
-}
-function toggleServiceTypeBtn(input){
-  const label=input.closest('label');
-  label.classList.toggle('btn-gold', input.checked);
-  label.classList.toggle('btn-outline-secondary', !input.checked);
-}
-function getCheckedServiceTypes(containerId){
-  return Array.from(document.querySelectorAll('#'+containerId+' .service-type-check:checked')).map(el=>el.value);
-}
 function openNewVehicle(){
   document.getElementById('nvEntry').value=todayISO();
   newVehicleParts={}; selectedPart=null; selectedPartCtx=null;
-  renderServiceTypeCheckboxes('nvServiceTypes', []);
   renderNewVehicleDiagram();
   new bootstrap.Offcanvas(document.getElementById('ocNewVehicle')).show();
 }
@@ -797,7 +776,6 @@ async function saveNewVehicle(){
     responsavel:document.getElementById('nvResponsavel').value,
     budget:parseFloat(document.getElementById('nvBudget').value)||0,
     paymentStatus:document.getElementById('nvPayment').value,
-    serviceTypes:getCheckedServiceTypes('nvServiceTypes'),
     parts:JSON.parse(JSON.stringify(newVehicleParts))
   });
   c.stageHistory=[{stage:c.stage, at:nowISO(), by:currentUser.username}];
@@ -849,7 +827,7 @@ function renderAdvChecklist(c){
   const wrap=document.getElementById('advPartsChecklistWrap');
   const box=document.getElementById('advPartsChecklist');
   const service=STAGE_TO_SERVICE[c.stage];
-  const pending=service ? Object.keys(c.parts).filter(k=>c.parts[k].service===service && !c.parts[k].done) : [];
+  const pending=service ? Object.keys(c.parts).filter(k=>(c.parts[k].services||[]).includes(service) && !c.parts[k].done) : [];
   if(pending.length===0){ wrap.style.display='none'; box.innerHTML=''; return; }
   wrap.style.display='block';
   box.innerHTML=pending.map(k=>{
@@ -865,7 +843,7 @@ async function confirmAdvance(){
   const c=cars.find(c=>c.id===id);
   const service=STAGE_TO_SERVICE[c.stage];
   if(service){
-    Object.keys(c.parts).filter(k=>c.parts[k].service===service && !c.parts[k].done).forEach(function(k){
+    Object.keys(c.parts).filter(k=>(c.parts[k].services||[]).includes(service) && !c.parts[k].done).forEach(function(k){
       const chk=document.getElementById('advChk_'+k);
       if(chk && chk.checked){ c.parts[k].done=true; c.parts[k].updatedAt=nowISO(); }
     });
@@ -943,35 +921,52 @@ const SERVICE_TYPES={
 function getPartsStore(ctx){ return ctx==='NEW' ? newVehicleParts : (cars.find(c=>c.id===ctx)||{parts:{}}).parts; }
 function refreshCtx(ctx){ if(ctx==='NEW') renderNewVehicleDiagram(); else renderDetail(ctx); }
 function partCompletionPct(parts){
-  const assigned=Object.keys(parts).filter(k=>parts[k].service);
+  const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
   if(assigned.length===0) return null;
   const done=assigned.filter(k=>parts[k].done);
   return Math.round(done.length/assigned.length*100);
 }
+function getCarServiceTypes(c){
+  const set={};
+  Object.keys(c.parts||{}).forEach(function(k){
+    (c.parts[k].services||[]).forEach(function(s){ set[s]=true; });
+  });
+  return Object.keys(set);
+}
 function partsProgressText(parts){
   const pct=partCompletionPct(parts);
   if(pct===null) return '';
-  const assigned=Object.keys(parts).filter(k=>parts[k].service);
-  const done=assigned.filter(k=>parts[k].done);
-  return '\n\n🔧 Progresso do reparo: '+pct+'% concluído ('+done.length+'/'+assigned.length+' itens).';
+  const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
 }
 function buildCarSvgMarkup(parts, ctx, editable){
   let svg='<svg viewBox="0 0 280 460" style="width:100%;max-width:250px;display:block;margin:0 auto;" id="carSvg_'+ctx+'" xmlns="http://www.w3.org/2000/svg">';
-  svg+='<defs><linearGradient id="carBodyGrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#d1d5db"/><stop offset="50%" stop-color="#f3f4f6"/><stop offset="100%" stop-color="#d1d5db"/></linearGradient></defs>';
-  svg+='<rect x="25" y="8" width="230" height="433" rx="60" ry="40" fill="url(#carBodyGrad)" stroke="#9ca3af" stroke-width="2"/>';
-  svg+='<rect x="0" y="90" width="20" height="100" rx="8" fill="#2b2b2b"/><rect x="260" y="90" width="20" height="100" rx="8" fill="#2b2b2b"/>';
-  svg+='<rect x="0" y="230" width="20" height="100" rx="8" fill="#2b2b2b"/><rect x="260" y="230" width="20" height="100" rx="8" fill="#2b2b2b"/>';
+  svg+='<defs><linearGradient id="carBodyGrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#c7cdd6"/><stop offset="50%" stop-color="#eef1f4"/><stop offset="100%" stop-color="#c7cdd6"/></linearGradient>'+
+    '<radialGradient id="lightGrad" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#fff9c4"/><stop offset="100%" stop-color="#fbc02d"/></radialGradient></defs>';
+  // corpo principal
+  svg+='<rect x="25" y="8" width="230" height="433" rx="55" ry="38" fill="url(#carBodyGrad)" stroke="#8b95a3" stroke-width="2"/>';
+  // nariz (frente afunilada) e cauda (traseira afunilada), fora da área das peças clicáveis
+  svg+='<path d="M60,15 Q140,-10 220,15 Q220,30 140,25 Q60,30 60,15 Z" fill="url(#carBodyGrad)" stroke="#8b95a3" stroke-width="1.5"/>';
+  svg+='<path d="M60,433 Q140,458 220,433 Q220,418 140,423 Q60,418 60,433 Z" fill="url(#carBodyGrad)" stroke="#8b95a3" stroke-width="1.5"/>';
+  // rodas com arco
+  svg+='<ellipse cx="8" cy="140" rx="16" ry="56" fill="#1a1a1a"/><ellipse cx="272" cy="140" rx="16" ry="56" fill="#1a1a1a"/>';
+  svg+='<ellipse cx="8" cy="280" rx="16" ry="56" fill="#1a1a1a"/><ellipse cx="272" cy="280" rx="16" ry="56" fill="#1a1a1a"/>';
   PART_DEFS.forEach(function(p){
     const entry=parts[p.id];
     let fill='#f8fafc';
-    if(entry && entry.service){ fill = entry.done ? '#10b981' : SERVICE_TYPES[entry.service].color; }
+    if(entry && entry.services && entry.services.length){ fill = entry.done ? '#10b981' : SERVICE_TYPES[entry.services[0]].color; }
     const sel=(selectedPartCtx===ctx && selectedPart===p.id)?' selected':'';
     const click=editable?' onclick="selectPart(\''+ctx+'\',\''+p.id+'\')"':'';
     svg+='<rect class="car-zone'+sel+'" x="'+p.x+'" y="'+p.y+'" width="'+p.w+'" height="'+p.h+'" rx="'+(p.rx||8)+'" fill="'+fill+'"'+click+'><title>'+p.label+'</title></rect>';
   });
-  svg+='<line x1="60" y1="113" x2="220" y2="113" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="3,3"/>';
-  svg+='<line x1="60" y1="291" x2="220" y2="291" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="3,3"/>';
-  svg+='<line x1="140" y1="115" x2="140" y2="289" stroke="#9ca3af" stroke-width="1" stroke-dasharray="2,4"/>';
+  // faróis e lanternas (sobre o para-choque, sem bloquear o clique)
+  svg+='<ellipse cx="80" cy="24" rx="11" ry="7" fill="url(#lightGrad)" stroke="#b8860b" stroke-width="1" pointer-events="none"/>';
+  svg+='<ellipse cx="200" cy="24" rx="11" ry="7" fill="url(#lightGrad)" stroke="#b8860b" stroke-width="1" pointer-events="none"/>';
+  svg+='<ellipse cx="80" cy="424" rx="11" ry="7" fill="#dc2626" opacity="0.85" pointer-events="none"/>';
+  svg+='<ellipse cx="200" cy="424" rx="11" ry="7" fill="#dc2626" opacity="0.85" pointer-events="none"/>';
+  // vidros (para-brisa e vigia traseira), leve tom translúcido sobre as peças
+  svg+='<rect x="58" y="106" width="164" height="14" rx="5" fill="#93c5fd" opacity="0.4" pointer-events="none"/>';
+  svg+='<rect x="58" y="286" width="164" height="14" rx="5" fill="#93c5fd" opacity="0.4" pointer-events="none"/>';
+  svg+='<line x1="140" y1="115" x2="140" y2="289" stroke="#9ca3af" stroke-width="1" stroke-dasharray="2,4" pointer-events="none"/>';
   svg+='</svg>';
   return svg;
 }
@@ -990,20 +985,22 @@ function carDiagramHtml(parts, ctx, editable){
   if(editable && selectedPartCtx===ctx && selectedPart){
     const pdef=PART_DEFS.find(p=>p.id===selectedPart);
     const entry=parts[selectedPart];
-    html+='<div class="border rounded p-2 mb-2"><div class="small fw-bold mb-2">Peça: '+pdef.label+'</div><div class="d-flex flex-wrap gap-1 mb-2">'+
+    const entrySvcs=(entry&&entry.services)||[];
+    html+='<div class="border rounded p-2 mb-2"><div class="small fw-bold mb-2">Peça: '+pdef.label+' — marque os serviços</div><div class="d-flex flex-wrap gap-1 mb-2">'+
       Object.keys(SERVICE_TYPES).map(function(k){
-        const active=entry&&entry.service===k;
-        return '<button class="btn btn-sm part-status-btn" style="background:'+SERVICE_TYPES[k].color+';color:#fff;'+(active?'box-shadow:0 0 0 2px #c9a227 inset;':'')+'" onclick="setPartService(\''+ctx+'\',\''+selectedPart+'\',\''+k+'\')">'+SERVICE_TYPES[k].label+'</button>';
+        const active=entrySvcs.includes(k);
+        return '<label class="btn btn-sm part-status-btn mb-0" style="cursor:pointer;'+(active?'background:'+SERVICE_TYPES[k].color+';color:#fff;box-shadow:0 0 0 2px #c9a227 inset;':'background:#e9ecef;color:#495057;')+'">'+
+          '<input type="checkbox" class="d-none" '+(active?'checked':'')+' onchange="togglePartService(\''+ctx+'\',\''+selectedPart+'\',\''+k+'\')"> '+SERVICE_TYPES[k].label+'</label>';
       }).join('')+
-      '<button class="btn btn-sm btn-outline-secondary part-status-btn" onclick="setPartService(\''+ctx+'\',\''+selectedPart+'\',\'\')">Sem serviço</button>'+
+      (entrySvcs.length?'<button class="btn btn-sm btn-outline-secondary part-status-btn" onclick="clearPartServices(\''+ctx+'\',\''+selectedPart+'\')">Limpar</button>':'')+
       '</div>';
-    if(entry && entry.service){
+    if(entrySvcs.length){
       html+='<button class="btn btn-sm '+(entry.done?'btn-success':'btn-outline-success')+'" onclick="togglePartDone(\''+ctx+'\',\''+selectedPart+'\')">'+(entry.done?'✅ Concluído':'☐ Marcar como concluído')+'</button>';
     }
     html+='</div>';
   }
-  const assigned=Object.keys(parts).filter(k=>parts[k].service);
-  html+= assigned.length ? '<div class="small mb-2"><b>Peças marcadas:</b> '+assigned.map(k=>PART_DEFS.find(p=>p.id===k).label+' — '+SERVICE_TYPES[parts[k].service].label+(parts[k].done?' ✅':' ⏳')).join(' • ')+'</div>' : '<p class="small text-secondary mb-2">Nenhuma peça marcada ainda — toque em uma área do desenho.</p>';
+  const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
+  html+= assigned.length ? '<div class="small mb-2"><b>Peças marcadas:</b> '+assigned.map(k=>PART_DEFS.find(p=>p.id===k).label+' — '+parts[k].services.map(s=>SERVICE_TYPES[s].label).join(' + ')+(parts[k].done?' ✅':' ⏳')).join(' • ')+'</div>' : '<p class="small text-secondary mb-2">Nenhuma peça marcada ainda — toque em uma área do desenho.</p>';
   if(editable && ctx!=='NEW'){
     html+='<button class="btn btn-sm btn-outline-secondary" onclick="downloadCarMap(\''+ctx+'\')"><i class="bi bi-image me-1"></i>Baixar mapa (imagem p/ enviar)</button>';
   }
@@ -1014,10 +1011,21 @@ function selectPart(ctx,partId){
   selectedPart=(selectedPart===partId && selectedPartCtx===ctx)?null:partId;
   refreshCtx(ctx);
 }
-async function setPartService(ctx,partId,service){
+async function togglePartService(ctx,partId,service){
   const parts=getPartsStore(ctx);
-  if(!service){ delete parts[partId]; }
-  else{ parts[partId]={service:service, done:(parts[partId]&&parts[partId].done)||false, updatedAt:nowISO()}; }
+  const cur=parts[partId]||{services:[],done:false};
+  const svcs=cur.services||[];
+  const idx=svcs.indexOf(service);
+  if(idx>=0) svcs.splice(idx,1); else svcs.push(service);
+  parts[partId]={services:svcs, done:svcs.length?cur.done:false, updatedAt:nowISO()};
+  if(svcs.length===0) delete parts[partId];
+  if(ctx!=='NEW') await saveCars();
+  refreshCtx(ctx);
+  if(ctx!=='NEW') renderVehicles();
+}
+async function clearPartServices(ctx,partId){
+  const parts=getPartsStore(ctx);
+  delete parts[partId];
   if(ctx!=='NEW') await saveCars();
   refreshCtx(ctx);
   if(ctx!=='NEW') renderVehicles();
@@ -1082,9 +1090,6 @@ function renderDetail(id){
   html+='<h6 class="fw-bold text-gold small text-uppercase">Checklist</h6>';
   html+='<p class="small mb-3">Cor: '+(c.color||'—')+' • KM: '+(c.km||'—')+' • Combustível: '+(c.fuel||'—')+'<br>Avarias: '+(c.damage||'Nenhuma')+'</p>';
 
-  html+='<h6 class="fw-bold text-gold small text-uppercase">Quais serviços serão feitos?</h6>';
-  html+='<div id="detailServiceTypes-'+c.id+'" class="mb-3 d-flex flex-wrap gap-2"></div>';
-
   html+='<h6 class="fw-bold text-gold small text-uppercase">Mapa do veículo</h6>';
   html+=carDiagramHtml(c.parts, c.id, true);
 
@@ -1118,12 +1123,6 @@ function renderDetail(id){
   html+='<button class="btn btn-outline-danger flex-fill btn-sm admin-only" onclick="deleteCard(\''+c.id+'\')"><i class="bi bi-trash me-1"></i>Remover</button></div>';
 
   body.innerHTML=html;
-  renderServiceTypeCheckboxes('detailServiceTypes-'+c.id, c.serviceTypes);
-  document.querySelectorAll('#detailServiceTypes-'+c.id+' .service-type-check').forEach(function(el){
-    el.addEventListener('change', async function(){
-      await updateCarField(c.id,'serviceTypes',getCheckedServiceTypes('detailServiceTypes-'+c.id));
-    });
-  });
 }
 async function updateCarField(id,field,value){
   const c=cars.find(c=>c.id===id); if(!c) return;
@@ -1231,10 +1230,10 @@ function printOS(id){
   html+='<div><b style="color:'+navy+';">Responsável:</b> '+(resp?resp.displayName:'—')+'</div>';
   html+='</div>';
 
-  if((c.serviceTypes||[]).length){
+  if(getCarServiceTypes(c).length){
     html+='<div style="margin-bottom:14px;">';
     html+='<div style="font-size:11px;font-weight:700;color:'+navy+';text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Serviços previstos</div>';
-    html+=c.serviceTypes.map(k=>'<span style="display:inline-block;background:'+SERVICE_TYPES[k].color+';color:#fff;border-radius:5px;padding:3px 10px;font-size:12px;margin:0 6px 6px 0;">'+SERVICE_TYPES[k].label+'</span>').join('');
+    html+=getCarServiceTypes(c).map(k=>'<span style="display:inline-block;background:'+SERVICE_TYPES[k].color+';color:#fff;border-radius:5px;padding:3px 10px;font-size:12px;margin:0 6px 6px 0;">'+SERVICE_TYPES[k].label+'</span>').join('');
     html+='</div>';
   }
 
