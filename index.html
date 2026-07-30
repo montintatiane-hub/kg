@@ -293,6 +293,9 @@ body{ background:#f4f5f7; }
     </div>
     <div class="mb-3"><label class="form-label">Avarias na entrada</label><input class="form-control" id="nvDamage" placeholder="Ex: risco na porta direita"></div>
 
+    <div class="small fw-bold text-gold text-uppercase mb-2">Quais serviços serão feitos?</div>
+    <div id="nvServiceTypes" class="mb-3 d-flex flex-wrap gap-2"></div>
+
     <div class="small fw-bold text-gold text-uppercase mb-2">Mapa do veículo — quais peças precisam de serviço?</div>
     <div id="newVehicleDiagram" class="mb-3"></div>
 
@@ -518,11 +521,12 @@ const SEED_USERS=[
 
 function defaultCarFields(){
   return {phone:'',cpf:'',address:'',color:'',km:'',fuel:'',damage:'',priority:'normal',budget:0,paymentStatus:'pendente',
-    responsavel:'',services:[],photoBefore:'',photoAfter:'',attachments:[],messages:[],stageHistory:[],parts:{}};
+    responsavel:'',services:[],serviceTypes:[],photoBefore:'',photoAfter:'',attachments:[],messages:[],stageHistory:[],parts:{}};
 }
 function normalizeCar(c){
   const out=Object.assign(defaultCarFields(),c);
   if(!Array.isArray(out.services))out.services=[];
+  if(!Array.isArray(out.serviceTypes))out.serviceTypes=[];
   if(!Array.isArray(out.messages))out.messages=[];
   if(!Array.isArray(out.attachments))out.attachments=[];
   if(!out.parts||typeof out.parts!=='object'||Array.isArray(out.parts))out.parts={};
@@ -725,6 +729,7 @@ function vehicleCardHtml(c){
   if(isAdmin()) badges+='<span class="badge bg-'+paymentBg[c.paymentStatus]+' badge-soft me-1">💰 '+paymentLabel[c.paymentStatus]+'</span>';
   const resp=users.find(u=>u.username===c.responsavel);
   if(resp) badges+='<span class="badge bg-secondary-subtle text-secondary-emphasis badge-soft">👤 '+resp.displayName+'</span>';
+  let svcBadges=(c.serviceTypes||[]).map(k=>'<span class="badge badge-soft me-1 mt-1" style="background:'+SERVICE_TYPES[k].color+';color:#fff;">'+SERVICE_TYPES[k].label+'</span>').join('');
   const thumb=c.photoBefore ? '<img src="'+c.photoBefore+'" class="kg-thumb">' : '<div class="kg-thumb-placeholder"><i class="bi bi-car-front"></i></div>';
   let actions;
   if(c.stage==='ready'){
@@ -738,6 +743,7 @@ function vehicleCardHtml(c){
     '<div class="card-body pb-2">'+
     '<div class="d-flex justify-content-between align-items-start mb-1"><div><div class="fw-bold">'+c.car+'</div><span class="badge bg-gold-subtle text-gold badge-soft">'+c.plate+'</span></div><span class="badge bg-'+stageBg[c.stage]+'-subtle text-'+stageBg[c.stage]+'-emphasis badge-soft">'+info.badge+'</span></div>'+
     '<div class="mb-2">'+badges+'</div>'+
+    (svcBadges?'<div class="mb-2">'+svcBadges+'</div>':'')+
     '<div class="d-flex align-items-center gap-2 mb-2"><div class="avatar-circle">'+initials+'</div><span class="small">'+c.name+'</span></div>'+
     '<div class="small text-secondary mb-2"><i class="bi bi-calendar-event me-1"></i>'+fmtDateShort(c.entry)+(c.due?' → '+fmtDateShort(c.due):'')+'</div>'+
     '</div><div class="card-footer bg-transparent border-0 pt-0 pb-3 d-flex gap-2">'+actions+'</div>'+
@@ -745,9 +751,26 @@ function vehicleCardHtml(c){
 }
 
 /* ================= NEW VEHICLE ================= */
+function renderServiceTypeCheckboxes(containerId, selected){
+  const sel=selected||[];
+  document.getElementById(containerId).innerHTML=Object.keys(SERVICE_TYPES).map(function(k){
+    const checked=sel.includes(k);
+    return '<label class="btn btn-sm '+(checked?'btn-gold':'btn-outline-secondary')+' mb-0" style="cursor:pointer;">'+
+      '<input type="checkbox" value="'+k+'" class="service-type-check d-none" data-container="'+containerId+'" '+(checked?'checked':'')+' onchange="toggleServiceTypeBtn(this)"> '+SERVICE_TYPES[k].label+'</label>';
+  }).join('');
+}
+function toggleServiceTypeBtn(input){
+  const label=input.closest('label');
+  label.classList.toggle('btn-gold', input.checked);
+  label.classList.toggle('btn-outline-secondary', !input.checked);
+}
+function getCheckedServiceTypes(containerId){
+  return Array.from(document.querySelectorAll('#'+containerId+' .service-type-check:checked')).map(el=>el.value);
+}
 function openNewVehicle(){
   document.getElementById('nvEntry').value=todayISO();
   newVehicleParts={}; selectedPart=null; selectedPartCtx=null;
+  renderServiceTypeCheckboxes('nvServiceTypes', []);
   renderNewVehicleDiagram();
   new bootstrap.Offcanvas(document.getElementById('ocNewVehicle')).show();
 }
@@ -774,6 +797,7 @@ async function saveNewVehicle(){
     responsavel:document.getElementById('nvResponsavel').value,
     budget:parseFloat(document.getElementById('nvBudget').value)||0,
     paymentStatus:document.getElementById('nvPayment').value,
+    serviceTypes:getCheckedServiceTypes('nvServiceTypes'),
     parts:JSON.parse(JSON.stringify(newVehicleParts))
   });
   c.stageHistory=[{stage:c.stage, at:nowISO(), by:currentUser.username}];
@@ -1058,6 +1082,9 @@ function renderDetail(id){
   html+='<h6 class="fw-bold text-gold small text-uppercase">Checklist</h6>';
   html+='<p class="small mb-3">Cor: '+(c.color||'—')+' • KM: '+(c.km||'—')+' • Combustível: '+(c.fuel||'—')+'<br>Avarias: '+(c.damage||'Nenhuma')+'</p>';
 
+  html+='<h6 class="fw-bold text-gold small text-uppercase">Quais serviços serão feitos?</h6>';
+  html+='<div id="detailServiceTypes-'+c.id+'" class="mb-3 d-flex flex-wrap gap-2"></div>';
+
   html+='<h6 class="fw-bold text-gold small text-uppercase">Mapa do veículo</h6>';
   html+=carDiagramHtml(c.parts, c.id, true);
 
@@ -1091,6 +1118,12 @@ function renderDetail(id){
   html+='<button class="btn btn-outline-danger flex-fill btn-sm admin-only" onclick="deleteCard(\''+c.id+'\')"><i class="bi bi-trash me-1"></i>Remover</button></div>';
 
   body.innerHTML=html;
+  renderServiceTypeCheckboxes('detailServiceTypes-'+c.id, c.serviceTypes);
+  document.querySelectorAll('#detailServiceTypes-'+c.id+' .service-type-check').forEach(function(el){
+    el.addEventListener('change', async function(){
+      await updateCarField(c.id,'serviceTypes',getCheckedServiceTypes('detailServiceTypes-'+c.id));
+    });
+  });
 }
 async function updateCarField(id,field,value){
   const c=cars.find(c=>c.id===id); if(!c) return;
@@ -1197,6 +1230,13 @@ function printOS(id){
   html+='<div><b style="color:'+navy+';">Etapa atual:</b> '+stageInfo[c.stage].badge+'</div>';
   html+='<div><b style="color:'+navy+';">Responsável:</b> '+(resp?resp.displayName:'—')+'</div>';
   html+='</div>';
+
+  if((c.serviceTypes||[]).length){
+    html+='<div style="margin-bottom:14px;">';
+    html+='<div style="font-size:11px;font-weight:700;color:'+navy+';text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Serviços previstos</div>';
+    html+=c.serviceTypes.map(k=>'<span style="display:inline-block;background:'+SERVICE_TYPES[k].color+';color:#fff;border-radius:5px;padding:3px 10px;font-size:12px;margin:0 6px 6px 0;">'+SERVICE_TYPES[k].label+'</span>').join('');
+    html+='</div>';
+  }
 
   // Services table
   html+='<div style="font-size:11px;font-weight:700;color:'+navy+';text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Serviços / Peças</div>';
