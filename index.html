@@ -348,7 +348,7 @@ body{ background:#f4f5f7; }
         <p class="text-secondary small text-center" id="advSubtitle">—</p>
         <div class="mb-2">
           <label class="form-label">Nova etapa</label>
-          <select class="form-select" id="advStageSelect" onchange="updateAdvMsgPreview()"></select>
+          <select class="form-select" id="advStageSelect" onchange="renderAdvChecklist(cars.find(c=>c.id===pendingAdvance.id));updateAdvMsgPreview()"></select>
         </div>
         <div class="mb-2" id="advPartsChecklistWrap" style="display:none;">
           <label class="form-label">Quais peças foram concluídas nesta etapa?</label>
@@ -827,12 +827,17 @@ function renderAdvChecklist(c){
   const wrap=document.getElementById('advPartsChecklistWrap');
   const box=document.getElementById('advPartsChecklist');
   const service=STAGE_TO_SERVICE[c.stage];
-  const pending=service ? Object.keys(c.parts).filter(k=>(c.parts[k].services||[]).includes(service) && !c.parts[k].done) : [];
+  const newStage=document.getElementById('advStageSelect').value;
+  const pending=service ? Object.keys(c.parts).filter(function(k){
+    if(!(c.parts[k].services||[]).includes(service)) return false;
+    return stageOrder.indexOf(c.parts[k].stage||'waiting') < stageOrder.indexOf(newStage);
+  }) : [];
   if(pending.length===0){ wrap.style.display='none'; box.innerHTML=''; return; }
   wrap.style.display='block';
-  box.innerHTML=pending.map(k=>{
+  box.innerHTML='<div class="small text-secondary mb-1">Marque só as peças que vão junto para "'+stageInfo[newStage].badge+'". As desmarcadas ficam na etapa atual.</div>'+pending.map(k=>{
     const p=PART_DEFS.find(p=>p.id===k);
-    return '<div class="form-check"><input class="form-check-input" type="checkbox" id="advChk_'+k+'" checked><label class="form-check-label small" for="advChk_'+k+'">'+p.label+'</label></div>';
+    const atual=stageInfo[c.parts[k].stage||'waiting'].badge;
+    return '<div class="form-check"><input class="form-check-input" type="checkbox" id="advChk_'+k+'" checked><label class="form-check-label small" for="advChk_'+k+'">'+p.label+' <span class="text-secondary">(hoje: '+atual+')</span></label></div>';
   }).join('');
 }
 async function confirmAdvance(){
@@ -843,9 +848,12 @@ async function confirmAdvance(){
   const c=cars.find(c=>c.id===id);
   const service=STAGE_TO_SERVICE[c.stage];
   if(service){
-    Object.keys(c.parts).filter(k=>(c.parts[k].services||[]).includes(service) && !c.parts[k].done).forEach(function(k){
+    Object.keys(c.parts).filter(function(k){
+      if(!(c.parts[k].services||[]).includes(service)) return false;
+      return stageOrder.indexOf(c.parts[k].stage||'waiting') < stageOrder.indexOf(newStage);
+    }).forEach(function(k){
       const chk=document.getElementById('advChk_'+k);
-      if(chk && chk.checked){ c.parts[k].done=true; c.parts[k].updatedAt=nowISO(); }
+      if(chk && chk.checked){ c.parts[k].stage=newStage; c.parts[k].updatedAt=nowISO(); }
     });
   }
   bootstrap.Modal.getInstance(document.getElementById('modalAdvance')).hide();
@@ -923,9 +931,11 @@ function refreshCtx(ctx){ if(ctx==='NEW') renderNewVehicleDiagram(); else render
 function partCompletionPct(parts){
   const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
   if(assigned.length===0) return null;
-  const done=assigned.filter(k=>parts[k].done);
+  const done=assigned.filter(k=>parts[k].stage==='ready');
   return Math.round(done.length/assigned.length*100);
 }
+const PART_STAGE_OPTIONS=['waiting','funilaria','preparation','painting','polimento','ready'];
+const STAGE_COLOR={waiting:'#f59e0b',funilaria:'#374151',preparation:'#3b82f6',painting:'#8b5cf6',polimento:'#0d9488',ready:'#10b981'};
 function getCarServiceTypes(c){
   const set={};
   Object.keys(c.parts||{}).forEach(function(k){
@@ -937,7 +947,7 @@ function partsProgressText(parts){
   const pct=partCompletionPct(parts);
   if(pct===null) return '';
   const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
-  const done=assigned.filter(k=>parts[k].done);
+  const done=assigned.filter(k=>parts[k].stage==='ready');
   return '\n\n🔧 Progresso do reparo: '+pct+'% concluído ('+done.length+'/'+assigned.length+' itens).';
 }
 function buildCarSvgMarkup(parts, ctx, editable){
@@ -955,7 +965,7 @@ function buildCarSvgMarkup(parts, ctx, editable){
   PART_DEFS.forEach(function(p){
     const entry=parts[p.id];
     let fill='#f8fafc';
-    if(entry && entry.services && entry.services.length){ fill = entry.done ? '#10b981' : SERVICE_TYPES[entry.services[0]].color; }
+    if(entry && entry.services && entry.services.length){ fill = STAGE_COLOR[entry.stage||'waiting']; }
     const sel=(selectedPartCtx===ctx && selectedPart===p.id)?' selected':'';
     const click=editable?' onclick="selectPart(\''+ctx+'\',\''+p.id+'\')"':'';
     svg+='<rect class="car-zone'+sel+'" x="'+p.x+'" y="'+p.y+'" width="'+p.w+'" height="'+p.h+'" rx="'+(p.rx||8)+'" fill="'+fill+'"'+click+'><title>'+p.label+'</title></rect>';
@@ -981,8 +991,7 @@ function carDiagramHtml(parts, ctx, editable){
   html+=buildCarSvgMarkup(parts, ctx, editable);
   html+='<div class="d-flex flex-wrap gap-2 justify-content-center my-2">'+
     '<span class="part-legend"><span class="dot" style="background:#f8fafc;border:1px solid #cbd5e1;"></span>Sem serviço</span>'+
-    Object.keys(SERVICE_TYPES).map(k=>'<span class="part-legend"><span class="dot" style="background:'+SERVICE_TYPES[k].color+'"></span>'+SERVICE_TYPES[k].label+' (pendente)</span>').join('')+
-    '<span class="part-legend"><span class="dot" style="background:#10b981"></span>Concluído</span>'+
+    PART_STAGE_OPTIONS.map(s=>'<span class="part-legend"><span class="dot" style="background:'+STAGE_COLOR[s]+'"></span>'+stageInfo[s].badge+'</span>').join('')+
   '</div>';
   if(editable && selectedPartCtx===ctx && selectedPart){
     const pdef=PART_DEFS.find(p=>p.id===selectedPart);
@@ -997,12 +1006,18 @@ function carDiagramHtml(parts, ctx, editable){
       (entrySvcs.length?'<button class="btn btn-sm btn-outline-secondary part-status-btn" onclick="clearPartServices(\''+ctx+'\',\''+selectedPart+'\')">Limpar</button>':'')+
       '</div>';
     if(entrySvcs.length){
-      html+='<button class="btn btn-sm '+(entry.done?'btn-success':'btn-outline-success')+'" onclick="togglePartDone(\''+ctx+'\',\''+selectedPart+'\')">'+(entry.done?'✅ Concluído':'☐ Marcar como concluído')+'</button>';
+      const curStage=entry.stage||'waiting';
+      html+='<div class="small fw-bold mb-1">Etapa desta peça:</div><div class="d-flex flex-wrap gap-1">'+
+        PART_STAGE_OPTIONS.map(function(s){
+          const active=curStage===s;
+          return '<button class="btn btn-sm part-status-btn" style="'+(active?'background:'+STAGE_COLOR[s]+';color:#fff;box-shadow:0 0 0 2px #c9a227 inset;':'background:#e9ecef;color:#495057;')+'" onclick="setPartStage(\''+ctx+'\',\''+selectedPart+'\',\''+s+'\')">'+stageInfo[s].badge+'</button>';
+        }).join('')+
+      '</div>';
     }
     html+='</div>';
   }
   const assigned=Object.keys(parts).filter(k=>parts[k].services&&parts[k].services.length);
-  html+= assigned.length ? '<div class="small mb-2"><b>Peças marcadas:</b> '+assigned.map(k=>PART_DEFS.find(p=>p.id===k).label+' — '+parts[k].services.map(s=>SERVICE_TYPES[s].label).join(' + ')+(parts[k].done?' ✅':' ⏳')).join(' • ')+'</div>' : '<p class="small text-secondary mb-2">Nenhuma peça marcada ainda — toque em uma área do desenho.</p>';
+  html+= assigned.length ? '<div class="small mb-2"><b>Peças marcadas:</b> '+assigned.map(k=>PART_DEFS.find(p=>p.id===k).label+' — '+parts[k].services.map(s=>SERVICE_TYPES[s].label).join(' + ')+' • '+stageInfo[parts[k].stage||'waiting'].badge).join(' • ')+'</div>' : '<p class="small text-secondary mb-2">Nenhuma peça marcada ainda — toque em uma área do desenho.</p>';
   if(editable && ctx!=='NEW'){
     html+='<button class="btn btn-sm btn-outline-secondary" onclick="downloadCarMap(\''+ctx+'\')"><i class="bi bi-image me-1"></i>Baixar mapa (imagem p/ enviar)</button>';
   }
@@ -1015,11 +1030,11 @@ function selectPart(ctx,partId){
 }
 async function togglePartService(ctx,partId,service){
   const parts=getPartsStore(ctx);
-  const cur=parts[partId]||{services:[],done:false};
+  const cur=parts[partId]||{services:[],stage:'waiting'};
   const svcs=cur.services||[];
   const idx=svcs.indexOf(service);
   if(idx>=0) svcs.splice(idx,1); else svcs.push(service);
-  parts[partId]={services:svcs, done:svcs.length?cur.done:false, updatedAt:nowISO()};
+  parts[partId]={services:svcs, stage:cur.stage||'waiting', updatedAt:nowISO()};
   if(svcs.length===0) delete parts[partId];
   if(ctx!=='NEW') await saveCars();
   refreshCtx(ctx);
@@ -1032,10 +1047,10 @@ async function clearPartServices(ctx,partId){
   refreshCtx(ctx);
   if(ctx!=='NEW') renderVehicles();
 }
-async function togglePartDone(ctx,partId){
+async function setPartStage(ctx,partId,stage){
   const parts=getPartsStore(ctx);
   if(!parts[partId]) return;
-  parts[partId].done=!parts[partId].done;
+  parts[partId].stage=stage;
   parts[partId].updatedAt=nowISO();
   if(ctx!=='NEW') await saveCars();
   refreshCtx(ctx);
