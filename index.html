@@ -73,9 +73,9 @@ body{ background:#f4f5f7; }
 .kg-section{ display:none; }
 .kg-section.active{ display:block; }
 @media print{
-  body *{ visibility:hidden; }
-  #printArea, #printArea *{ visibility:visible; color:#000 !important; }
-  #printArea{ display:block !important; position:absolute; top:0; left:0; width:100%; padding:20px; background:#fff !important; color:#000 !important; }
+  body > *:not(#printArea){ display:none !important; }
+  #printArea{ display:block !important; width:100%; padding:20px; background:#fff !important; color:#000 !important; }
+  #printArea *{ color:#000 !important; }
 }
 .form-label{ font-weight:600; font-size:13px; }
 .list-group-item-action.client-item:hover{ background:var(--bs-tertiary-bg); }
